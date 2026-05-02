@@ -1,15 +1,16 @@
 # surrounded.nvim
 
-A minimal, fully configurable Neovim plugin that lets you surround a visual selection by pressing a key.
+A minimal, fully configurable Neovim plugin that lets you surround a visual selection with delimiters.
 
 ---
 
 ## Features
 
 - Press `S` (configurable) in visual mode, then type a delimiter
-- Optional **padding**: press `<Space>` (or any configured pad chars) before the delimiter
+- **Space padding**: each `<Space>` before the delimiter adds a space on both sides
+- **Newline padding**: pressing `<CR>` before the delimiter splits the selection onto its own indented line(s), respecting `shiftwidth` and `expandtab`
 - **Multi-character delimiters**: `**`, `==`, `__`, etc.
-- **Ambiguity resolution**: if `*` and `**` are both configured, waits for a timeout or `<CR>` to decide
+- **Ambiguity resolution**: if `*` and `**` are both configured, a libuv timer waits for a timeout or explicit `<CR>` — non-ambiguous delimiters always execute **instantly** with no delay
 - Fully user-configurable via `setup()`
 
 ---
@@ -18,9 +19,8 @@ A minimal, fully configurable Neovim plugin that lets you surround a visual sele
 
 ```lua
 {
-  dir = "/path/to/surrounded",   -- local clone
-  -- OR for a GitHub repo:
-  -- "yourusername/surrounded.nvim",
+  dir = "~/path/to/surrounded",   -- local clone
+  -- OR a GitHub repo: "yourusername/surrounded.nvim"
   config = function()
     require("surrounded").setup()  -- use all defaults
   end,
@@ -31,20 +31,60 @@ A minimal, fully configurable Neovim plugin that lets you surround a visual sele
 
 ## Default Behaviour
 
-| Keys typed (in visual mode) | Result (selection = `are some`) |
-|-----------------------------|---------------------------------|
-| `S[`   | `[are some]`   |
-| `S(`   | `(are some)`   |
-| `S{`   | `{are some}`   |
-| `S"`   | `"are some"`   |
-| `S'`   | `'are some'`   |
-| `S\`` | `` `are some` `` |
-| `S*`   | `*are some*`   |
-| `S**`  | `**are some**` |
-| `S=` or `S==` | `==are some==` |
-| `S\|`  | `\| are some \|` (auto-padded) |
-| `S [`  | `[ are some ]` (space = padding) |
-| `S  [` | `[  are some  ]` (2 spaces = 2 pad) |
+### Space padding
+
+| Keys (visual mode) | Result (`are some` selected) |
+|--------------------|------------------------------|
+| `S[`    | `[are some]`    |
+| `S(`    | `(are some)`    |
+| `S{`    | `{are some}`    |
+| `S"`    | `"are some"`    |
+| `S'`    | `'are some'`    |
+| `S*`    | `*are some*`    |
+| `S**`   | `**are some**`  |
+| `S=`    | `==are some==`  (mapped via `{ key="=", delimiter="==" }`) |
+| `S==`   | `==are some==`  |
+| `S\|`   | `\| are some \|` (auto-padded via config) |
+| `S [`   | `[ are some ]`  (one space = one pad unit) |
+| `S  [`  | `[  are some  ]` (two spaces = two pad units) |
+
+### Newline padding (`<CR>` before the delimiter)
+
+Given:
+```rust
+match some_enum {
+    SomeEnum::A => do_something(),
+    _ => ()
+}
+```
+Select `do_something()`, then press `S<CR>{`:
+```rust
+match some_enum {
+    SomeEnum::A => {
+        do_something()
+    },
+    _ => ()
+}
+```
+- The selection's base indentation is detected automatically.
+- Content is re-indented one `shiftwidth` deeper.
+- `expandtab` is respected (spaces vs tabs).
+- Multiple `<CR>` presses before the delimiter are supported (reserved for future use; currently behaves the same as one).
+
+---
+
+## Ambiguity & Timeout
+
+When `"*"` and `"**"` are both configured:
+
+1. You press `S*`.
+2. An exact match (`*`) exists, but `**` could still match.
+3. A libuv timer starts (`timeout` ms).
+   - Another `*` arrives in time → inserts `**…**`.
+   - `<CR>` arrives → accepts `*…*` immediately.
+   - Timer fires → accepts `*…*` automatically.
+
+Delimiters with **no ambiguity** (e.g. `S[`) execute **instantly** — no timeout.
 
 ---
 
@@ -52,43 +92,32 @@ A minimal, fully configurable Neovim plugin that lets you surround a visual sele
 
 ```lua
 require("surrounded").setup({
-  -- Key pressed in visual mode to start surrounding
+  -- Key that triggers surrounding in visual mode
   surround = "S",
 
-  -- Key to immediately accept an ambiguous shorter prefix
-  -- (e.g. `*` when `**` is also defined)
+  -- While reading a delimiter, press this to accept the shorter ambiguous match.
+  -- In the padding phase, <CR> is still a newline-pad (not accept).
   accept = "<CR>",
 
-  -- Milliseconds to wait before auto-accepting a shorter prefix
+  -- ms to wait before auto-accepting an ambiguous shorter delimiter.
+  -- Only fires when genuine ambiguity exists.
   timeout = 500,
 
-  -- Characters recognised as "padding" when typed between `S` and the delimiter.
-  -- Each occurrence adds one space on both sides of the wrapped text.
-  padding = { " " },
+  -- Padding characters (typed between `S` and the delimiter).
+  --   " "    → space pad  (one space per press on each side)
+  --   "<CR>" → newline pad (splits onto indented line)
+  padding = { " ", "<CR>" },
 
-  -- ── Symmetric delimiters ────────────────────────────────────────────────
-  -- The opening and closing text are the same.
-  --
-  -- String shorthand:  "**"        → key = "**", open = "**", close = "**"
-  -- Table (key ≠ delim): { key = "=", delimiter = "==" }
-  --                     → pressing `=` inserts `==…==`
-  -- Table (auto-pad):   { delimiter = "|", pad = " " }
-  --                     → pressing `|` inserts `| … |`
+  -- Symmetric delimiters
   units = {
     "*",
     "**",
     "==",
-    { key = "=",  delimiter = "==" },     -- single `=` → `==`
-    { delimiter = "|", pad = " " },        -- `|` always padded
+    { key = "=",  delimiter = "==" },      -- `=` → ==…==
+    { delimiter = "|", pad = " " },         -- `|` always pads: | … |
   },
 
-  -- ── Asymmetric delimiters ───────────────────────────────────────────────
-  -- Opening and closing text differ.  The key defaults to `open`.
-  --
-  -- Basic:              { open = "[",  close = "]" }
-  -- Explicit key:       { key = "[",  open = "[ ", close = " ]" }
-  -- Pad shorthand:      { open = "[",  close = "]", pad = " " }
-  --                     → equivalent to { open="[ ", close=" ]" }
+  -- Asymmetric delimiters
   pairs = {
     { open = "[",  close = "]"  },
     { open = "(",  close = ")"  },
@@ -97,28 +126,19 @@ require("surrounded").setup({
     { open = '"',  close = '"'  },
     { open = "'",  close = "'"  },
     { open = "`",  close = "`"  },
+    -- explicit key different from open:
+    -- { key = "b", open = "**", close = "**" }
+    -- pad shorthand:
+    -- { open = "[", close = "]", pad = " " }   →   [ … ]
   },
 })
 ```
 
 ---
 
-## Ambiguity & Timeout
+## lazy.nvim Examples
 
-When you have both `"*"` and `"**"` configured:
-
-1. You press `S*`.
-2. The plugin has a valid match (`*`) but `**` could also match.
-3. It waits up to `timeout` ms for another character.
-   - Another `*` arrives → inserts `**…**`.
-   - `<CR>` arrives     → accepts `*…*` immediately.
-   - Timeout expires   → accepts `*…*` automatically.
-
----
-
-## Installation Examples
-
-### lazy.nvim (local directory)
+### Local directory
 
 ```lua
 {
@@ -126,20 +146,18 @@ When you have both `"*"` and `"**"` configured:
   config = function()
     require("surrounded").setup({
       timeout = 400,
-      units = { "*", "**", "_", "__", "==", { key = "=", delimiter = "==" } },
-      pairs = {
-        { open = "[", close = "]" },
-        { open = "(", close = ")" },
-        { open = "{", close = "}" },
-        { open = '"', close = '"' },
-        { open = "'", close = "'" },
+      units = {
+        "*", "**",
+        "_", "__",
+        "==",
+        { key = "=", delimiter = "==" },
       },
     })
   end,
 }
 ```
 
-### lazy.nvim (GitHub)
+### GitHub + `opts` shorthand
 
 ```lua
 {
@@ -152,5 +170,5 @@ When you have both `"*"` and `"**"` configured:
 }
 ```
 
-> **Tip:** Using `opts = { … }` instead of `config = function() … end` automatically
-> calls `require("surrounded").setup(opts)` for you via lazy.nvim.
+> `opts = { … }` automatically calls `require("surrounded").setup(opts)` — no
+> `config` function needed.
