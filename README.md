@@ -1,123 +1,134 @@
 # surrounded.nvim
 
-A minimal, fully configurable Neovim plugin that lets you surround a visual selection with delimiters.
+A minimal, fully configurable Neovim plugin for surrounding visual selections with delimiters.
 
 ---
 
 ## Features
 
-- Press `S` (configurable) in visual mode, then type a delimiter
-- **Space padding**: each `<Space>` before the delimiter adds a space on both sides
-- **Newline padding**: pressing `<CR>` before the delimiter splits the selection onto its own indented line(s), respecting `shiftwidth` and `expandtab`
-- **Multi-character delimiters**: `**`, `==`, `__`, etc.
-- **Ambiguity resolution**: if `*` and `**` are both configured, a libuv timer waits for a timeout or explicit `<CR>` — non-ambiguous delimiters always execute **instantly** with no delay
-- Fully user-configurable via `setup()`
+- **All visual modes**: charwise (`v`), linewise (`V`), blockwise (`<C-v>`)
+- **Space padding**: each `<Space>` before the delimiter adds a space on each side
+- **Newline padding**: `<CR>` before the delimiter splits selection onto its own indented line
+- **Multi-character delimiters** with ambiguity resolution (`*` vs `**`)
+- **Auto-terminate** (`auto_terminate = true`): any character that can't extend the current prefix immediately accepts the shorter match and feeds the key back to Neovim
+- **Dot-repeat**: after a surround, `.` re-applies it to the previous visual selection
 
 ---
 
-## Quick Start (lazy.nvim)
+## Quick Start
 
 ```lua
+-- lazy.nvim
 {
-  dir = "~/path/to/surrounded",   -- local clone
-  -- OR a GitHub repo: "yourusername/surrounded.nvim"
+  dir = "~/path/to/surrounded",
   config = function()
-    require("surrounded").setup()  -- use all defaults
+    require("surrounded").setup()
   end,
 }
 ```
 
 ---
 
-## Default Behaviour
+## Behaviour Reference
 
-### Space padding
+### Charwise / linewise
 
 | Keys (visual mode) | Result (`are some` selected) |
 |--------------------|------------------------------|
-| `S[`    | `[are some]`    |
-| `S(`    | `(are some)`    |
-| `S{`    | `{are some}`    |
-| `S"`    | `"are some"`    |
-| `S'`    | `'are some'`    |
-| `S*`    | `*are some*`    |
-| `S**`   | `**are some**`  |
-| `S=`    | `==are some==`  (mapped via `{ key="=", delimiter="==" }`) |
-| `S==`   | `==are some==`  |
-| `S\|`   | `\| are some \|` (auto-padded via config) |
-| `S [`   | `[ are some ]`  (one space = one pad unit) |
-| `S  [`  | `[  are some  ]` (two spaces = two pad units) |
+| `S[`  | `[are some]`   |
+| `S(`  | `(are some)`   |
+| `S{`  | `{are some}`   |
+| `S"`  | `"are some"`   |
+| `S*`  | `*are some*`   |
+| `S**` | `**are some**` |
+| `S=`  | `==are some==` |
+| `S [` | `[ are some ]` |
+| `S "` | `" are some "` |
 
 ### Newline padding (`<CR>` before the delimiter)
 
-Given:
-```rust
-match some_enum {
-    SomeEnum::A => do_something(),
-    _ => ()
-}
+Selection: `do_something()` inside a match arm.
+
 ```
-Select `do_something()`, then press `S<CR>{`:
-```rust
-match some_enum {
-    SomeEnum::A => {
-        do_something()
-    },
-    _ => ()
-}
+S<CR>{
 ```
-- The selection's base indentation is detected automatically.
-- Content is re-indented one `shiftwidth` deeper.
-- `expandtab` is respected (spaces vs tabs).
-- Multiple `<CR>` presses before the delimiter are supported (reserved for future use; currently behaves the same as one).
+
+Before:
+```rust
+SomeEnum::A => do_something(),
+```
+After:
+```rust
+SomeEnum::A => {
+    do_something()
+},
+```
+
+- Base indentation is detected from the selection's start line.
+- Content is re-indented by one `shiftwidth` (respects `expandtab`).
+
+### Visual block mode
+
+Select a column of `todo!()` calls with `<C-v>`, then `S {`:
+
+Before:
+```rust
+SomeEnum::A => todo!(),
+SomeEnum::B => todo!(),
+SomeEnum::C => todo!(),
+```
+After:
+```rust
+SomeEnum::A => { todo!() },
+SomeEnum::B => { todo!() },
+SomeEnum::C => { todo!() },
+```
+
+Each row of the block is surrounded independently.
+
+### Auto-terminate
+
+With `auto_terminate = true` (the default) and both `*` and `**` configured:
+
+- `S*<CR>` → `*…*` (explicit accept)
+- `S*j`    → `*…*` then the cursor moves down (j is fed back to Neovim)
+- `S**`    → `**…**`
+
+Without `auto_terminate`, unrecognised characters after an ambiguous prefix warn and abort.
+
+### Dot-repeat
+
+After `S"`:
+1. Make a new visual selection.
+2. Press `.` in normal mode.
+3. The previous surround (`"…"`) is re-applied to the new selection.
+
+The dot-repeat binding is temporary — it clears itself on the next `TextChanged`, `InsertEnter`, or `CmdlineEnter` event so it never interferes with normal `.` behaviour.
 
 ---
 
-## Ambiguity & Timeout
-
-When `"*"` and `"**"` are both configured:
-
-1. You press `S*`.
-2. An exact match (`*`) exists, but `**` could still match.
-3. A libuv timer starts (`timeout` ms).
-   - Another `*` arrives in time → inserts `**…**`.
-   - `<CR>` arrives → accepts `*…*` immediately.
-   - Timer fires → accepts `*…*` automatically.
-
-Delimiters with **no ambiguity** (e.g. `S[`) execute **instantly** — no timeout.
-
----
-
-## Configuration Reference
+## Configuration
 
 ```lua
 require("surrounded").setup({
-  -- Key that triggers surrounding in visual mode
-  surround = "S",
+  surround       = "S",      -- visual-mode trigger key
+  accept         = "<CR>",   -- accept ambiguous shorter match while in delimiter phase
+  timeout        = 500,      -- ms to wait before auto-accepting shorter ambiguous match
+  auto_terminate = true,     -- accept shorter match when next char can't extend prefix
 
-  -- While reading a delimiter, press this to accept the shorter ambiguous match.
-  -- In the padding phase, <CR> is still a newline-pad (not accept).
-  accept = "<CR>",
-
-  -- ms to wait before auto-accepting an ambiguous shorter delimiter.
-  -- Only fires when genuine ambiguity exists.
-  timeout = 500,
-
-  -- Padding characters (typed between `S` and the delimiter).
-  --   " "    → space pad  (one space per press on each side)
-  --   "<CR>" → newline pad (splits onto indented line)
-  padding = { " ", "<CR>" },
+  -- Padding characters (between `S` and the delimiter)
+  padding = { " ", "<CR>" }, -- space pad and newline pad
 
   -- Symmetric delimiters
   units = {
     "*",
     "**",
     "==",
-    { key = "=",  delimiter = "==" },      -- `=` → ==…==
-    { delimiter = "|", pad = " " },         -- `|` always pads: | … |
+    { key = "=",  delimiter = "==" },   -- `=` → ==…==
+    { delimiter = "|", pad = " " },      -- `|` → | … |
   },
 
-  -- Asymmetric delimiters
+  -- Asymmetric delimiters (key defaults to `open`)
   pairs = {
     { open = "[",  close = "]"  },
     { open = "(",  close = ")"  },
@@ -126,10 +137,10 @@ require("surrounded").setup({
     { open = '"',  close = '"'  },
     { open = "'",  close = "'"  },
     { open = "`",  close = "`"  },
-    -- explicit key different from open:
+    -- Explicit key:
     -- { key = "b", open = "**", close = "**" }
-    -- pad shorthand:
-    -- { open = "[", close = "]", pad = " " }   →   [ … ]
+    -- Pad shorthand (equivalent to specifying open/close with spaces):
+    -- { open = "[", close = "]", pad = " " }
   },
 })
 ```
@@ -143,32 +154,22 @@ require("surrounded").setup({
 ```lua
 {
   dir = "~/plugins/surrounded",
-  config = function()
-    require("surrounded").setup({
-      timeout = 400,
-      units = {
-        "*", "**",
-        "_", "__",
-        "==",
-        { key = "=", delimiter = "==" },
-      },
-    })
-  end,
-}
-```
-
-### GitHub + `opts` shorthand
-
-```lua
-{
-  "yourusername/surrounded.nvim",
-  event = "VeryLazy",
   opts = {
-    surround = "S",
-    timeout  = 500,
+    timeout        = 300,
+    auto_terminate = true,
+    units = { "*", "**", "_", "__", "==" },
   },
 }
 ```
 
-> `opts = { … }` automatically calls `require("surrounded").setup(opts)` — no
-> `config` function needed.
+### GitHub
+
+```lua
+{
+  "MasterTemple/surrounded.nvim",
+  event = "VeryLazy",
+  opts  = {},   -- all defaults
+}
+```
+
+> `opts = { … }` automatically calls `require("surrounded").setup(opts)`.

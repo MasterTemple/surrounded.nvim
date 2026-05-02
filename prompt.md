@@ -154,6 +154,21 @@ For example, if I press `S"`, and then I have another visual selection (without 
 
 ---
 
-- Timeout doesn't actually work
+- Make it so I can include newlines in the replacement
+
+I want to do something like this
+
+```lua
+{ key = "``", open = "```", close = "```", pad = "\n" },
+-- or
+{ key = "``", open = "```\n", close = "\n```" },
+```
+
+- Provide a configuration option to specify whether or not visual line selection should treat each line separately, or as 1 region (`visual_lines_separate = true/false`), currently it only treats each line separately
+
+- Dot/repeat support doesn't actually work
+
+- The early-terminate timeout doesn't actually work
 
 - Support `viwS"`?
+
