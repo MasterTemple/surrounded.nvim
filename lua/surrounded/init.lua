@@ -32,10 +32,13 @@ local DEFAULT_CONFIG = {
 	--   { key="=", delimiter="==" } pressing `=` yields ==…==
 	--   { delimiter="|", pad=" " }  pressing `|` yields | … |
 	units = {
+		"'",
+		'"',
+		"`",
 		"*",
 		"**",
-		"==",
 		{ key = "=", delimiter = "==" },
+		{ key = "b", delimiter = "**" },
 		{ delimiter = "|", pad = " " },
 	},
 
@@ -50,9 +53,6 @@ local DEFAULT_CONFIG = {
 		{ open = "(", close = ")" },
 		{ open = "{", close = "}" },
 		{ open = "<", close = ">" },
-		{ open = '"', close = '"' },
-		{ open = "'", close = "'" },
-		{ open = "`", close = "`" },
 	},
 }
 

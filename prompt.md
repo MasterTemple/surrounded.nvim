@@ -105,3 +105,55 @@ match some_enum {
 ```
 
 - The timeout should only be for when there are multiple of the same character/overlapping characters, not for executing the command in general
+
+---
+
+Very good
+
+- Now add a setting that will allow any character that is not part of a sequence to early terminate a shorter sequence (`auto_terminate = true`)
+For example, instead of only breaking immediately when typing `S*<CR>`, allow for `S*j` (when the user would move down and not have any binding that is `*j`)
+
+- There is a bug that sometimes says `end_col` is out of range.
+```lua
+	vim.api.nvim_buf_set_text(buf, srow, scol, erow, ecol, replacement)
+```
+It occurs when I am in visual line mode (and have the full line selected).
+
+- Also support visual block mode
+
+```rust
+match some_enum {
+    SomeEnum::A => todo!(),
+    SomeEnum::B => todo!(),
+    SomeEnum::C => todo!(),
+}
+```
+
+If my visual selection is
+
+```
+todo!()
+todo!()
+todo!()
+```
+
+and I press `S {`
+
+I want it to apply to each line separately, not as 1 selection:
+
+```rust
+match some_enum {
+    SomeEnum::A => { todo!() },
+    SomeEnum::B => { todo!() },
+    SomeEnum::C => { todo!() },
+}
+```
+
+- Lastly, if there is any way to do this, add dot `.` repeats
+For example, if I press `S"`, and then I have another visual selection (without any other operation in between), pressing `.` should execute `S"` again
+
+---
+
+- Timeout doesn't actually work
+
+- Support `viwS"`?
