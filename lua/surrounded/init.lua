@@ -1,4 +1,4 @@
--- surrounded/lua/surrounded/init.lua
+-- surrounded/lua/surrounded/init.lua  (v4)
 
 local M = {}
 
@@ -6,90 +6,72 @@ local M = {}
 -- Default configuration
 -- ─────────────────────────────────────────────────────────────────────────────
 
-local DEFAULT_CONFIG = {
-	-- Key pressed in visual mode to trigger surrounding.
-	surround = "S",
-
-	-- While reading a delimiter, pressing this key immediately accepts a shorter
-	-- ambiguous match (e.g. `*` when `**` is also configured).
-	-- NOTE: in the PADDING phase <CR> is still a newline-pad, not accept.
-	accept = "<CR>",
-
-	-- Milliseconds to wait before auto-accepting a shorter ambiguous delimiter.
-	-- Only starts when genuine ambiguity exists. Non-ambiguous keys are instant.
-	timeout = 500,
-
-	-- When true, any character that cannot extend the current prefix (and is not
-	-- accept/ESC) immediately accepts the shorter match and feeds the character
-	-- back to Neovim as if it was never consumed.
-	-- Example: `S*j` with auto_terminate=true → surrounds with `*`, then `j`
-	--           moves the cursor down as usual.
-	auto_terminate = true,
-
-	-- Characters treated as padding between `S` and the delimiter.
-	--   " "    → space pad : each press adds one space on each side of selection
-	--   "<CR>" → newline pad: splits selection onto its own indented line
-	padding = { " ", "<CR>" },
-
-	-- ── Symmetric delimiters ─────────────────────────────────────────────────
-	-- You can say: { delimiter = "|", pad = " " },
-	units = {
-		-- Single as Single
-		"`",
-		"~",
-		"!",
-		"@",
-		"#",
-		"$",
-		"%",
-		"^",
-		"&",
-		"*",
-		"-",
-		"_",
-		"+",
-		"'",
-		'"',
-		"|",
-		"/",
-
-		-- Single as Double
-		{ key = "=", delimiter = "==" },
-
-		-- Double as Double
-		-- "**",
-
-		-- Special
-		-- Italics
-		{ key = "i", delimiter = "*" },
-		{ key = "I", delimiter = "*" },
-		-- Bold
-		{ key = "b", delimiter = "**" },
-		{ key = "B", delimiter = "**" },
-		-- Highlight
-		{ key = "h", delimiter = "==" },
-		{ key = "H", delimiter = "==" },
-	},
-
-	-- ── Asymmetric delimiters ─────────────────────────────────────────────────
-	pairs = {
-		{ open = "[", close = "]" },
-		{ open = "(", close = ")" },
-		{ open = "{", close = "}" },
-		{ open = "<", close = ">" },
-		{ key = "``", open = "```", close = "```", pad = "\r" },
-	},
-}
+local DEFAULT_CONFIG = require("surrounded.config")
+-- local DEFAULT_CONFIG = {
+-- 	-- Key pressed in visual mode to trigger surrounding.
+-- 	surround = "S",
+--
+-- 	-- While reading a delimiter, press this to accept an ambiguous shorter match.
+-- 	-- (In the padding phase <CR> is still a newline-pad, not accept.)
+-- 	accept = "<CR>",
+--
+-- 	-- Milliseconds to wait before auto-accepting a shorter ambiguous delimiter.
+-- 	-- Only fires when genuine ambiguity exists; non-ambiguous keys execute instantly.
+-- 	timeout = 500,
+--
+-- 	-- When true, a character that cannot extend the current ambiguous prefix
+-- 	-- immediately accepts the shorter match and feeds the key back to Neovim.
+-- 	-- e.g. `S*j` → surround with `*` then `j` moves cursor down.
+-- 	auto_terminate = true,
+--
+-- 	-- Padding characters between `S` and the delimiter.
+-- 	--   " "    → space pad:   each press adds one space on each side
+-- 	--   "<CR>" → newline pad: splits selection onto its own indented line
+-- 	padding = { " ", "<CR>" },
+--
+-- 	-- When true, visual LINE mode (`V`) surrounds each selected line individually.
+-- 	-- When false, the whole line-range is treated as one region.
+-- 	visual_lines_separate = false,
+--
+-- 	-- ── Symmetric delimiters ─────────────────────────────────────────────────
+-- 	-- open == close (or a single key with an explicit delimiter string).
+-- 	-- Shapes:
+-- 	--   "**"                          key="**", open="**", close="**"
+-- 	--   { key="=", delimiter="==" }   pressing `=` yields  ==…==
+-- 	--   { delimiter="|", pad=" " }    pressing `|` yields  | … |
+-- 	--   { key="``", open="```\n", close="\n```" }   newlines in open/close are fine
+-- 	units = {
+-- 		"*",
+-- 		"**",
+-- 		"==",
+-- 		{ key = "=", delimiter = "==" },
+-- 		{ delimiter = "|", pad = " " },
+-- 	},
+--
+-- 	-- ── Asymmetric delimiters ─────────────────────────────────────────────────
+-- 	-- open ≠ close.  Key defaults to `open`.
+-- 	-- Shapes:
+-- 	--   { open="[", close="]" }
+-- 	--   { key="[", open="[ ", close=" ]" }
+-- 	--   { open="[", close="]", pad=" " }
+-- 	--   { open="```\n", close="\n```" }   newlines in open/close are fine
+-- 	pairs = {
+-- 		{ open = "[", close = "]" },
+-- 		{ open = "(", close = ")" },
+-- 		{ open = "{", close = "}" },
+-- 		{ open = "<", close = ">" },
+-- 		{ open = '"', close = '"' },
+-- 		{ open = "'", close = "'" },
+-- 		{ open = "`", close = "`" },
+-- 	},
+-- }
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Module-level state
 -- ─────────────────────────────────────────────────────────────────────────────
 
 local config = {}
-
--- Last successful operation, used for dot-repeat.
--- { open, close, space_count, newline_count, vis_mode }
-local last_op = nil
+local last_op = nil -- saved for dot-repeat
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Utilities
@@ -115,8 +97,29 @@ local function R(s)
 	return vim.api.nvim_replace_termcodes(s, true, true, true)
 end
 
-local BYTE_CR = R("<CR>")
-local BYTE_ESC = R("<Esc>")
+local BYTE_CR = R("<CR>") -- \r
+local BYTE_ESC = R("<Esc>") -- \27
+local BYTE_CTRLV = R("<C-v>") -- \22  (visual block mode indicator)
+
+-- Split a string on literal "\n" characters into a list of lines.
+-- "foo\nbar"  →  {"foo", "bar"}
+-- "foo"       →  {"foo"}
+-- "\nfoo"     →  {"", "foo"}
+local function split_lines(s)
+	local lines = {}
+	local pos = 1
+	while true do
+		local nl = s:find("\n", pos, true)
+		if nl then
+			table.insert(lines, s:sub(pos, nl - 1))
+			pos = nl + 1
+		else
+			table.insert(lines, s:sub(pos))
+			break
+		end
+	end
+	return lines
+end
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Padding classification
@@ -147,6 +150,13 @@ end
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Delimiter lookup
 -- ─────────────────────────────────────────────────────────────────────────────
+
+--[[
+  lookup[raw_key_bytes] = list of { open=string, close=string }
+
+  Keys are raw bytes (output of R()) so comparisons with getcharstr() work.
+  open/close may contain "\n"; split_lines() handles them at apply time.
+]]
 
 local function build_lookup()
 	local lookup = {}
@@ -201,39 +211,39 @@ local function find_candidates(lookup, prefix)
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Timeout-aware getcharstr (libuv timer)
+-- Timeout-aware getchar  (polling loop – works from blocking context)
 -- ─────────────────────────────────────────────────────────────────────────────
+--[[
+  vim.schedule_wrap cannot fire while getcharstr() is blocking the main thread,
+  so a libuv timer with a scheduled callback never actually interrupts it.
+
+  Solution: poll with getchar(1) (non-blocking, returns 0 when nothing is
+  pending) in a tight loop, sleeping 10 ms between polls via vim.uv.sleep()
+  which yields to libuv without requiring the Neovim scheduler.
+]]
 
 local function getchar_with_timeout(ms)
 	local uv = vim.uv or vim.loop
-	local fired = false
+	local elapsed = 0
+	local poll_ms = 10 -- granularity
 
-	local timer = uv.new_timer()
-	timer:start(
-		ms,
-		0,
-		vim.schedule_wrap(function()
-			if fired then
-				return
+	while elapsed < ms do
+		local c = vim.fn.getchar(1) -- non-blocking; 0 = no input
+		if c ~= 0 then
+			-- A character is waiting – consume it properly.
+			-- getchar(1) just peeks; we need to drain it.
+			-- Call getcharstr() now – it will return immediately.
+			local ch = vim.fn.getcharstr()
+			if ch == "\0" or ch == "" then
+				return nil
 			end
-			fired = true
-			timer:close()
-			vim.api.nvim_feedkeys("\0", "n", false)
-		end)
-	)
-
-	local ch = vim.fn.getcharstr()
-
-	if not fired then
-		fired = true
-		timer:stop()
-		timer:close()
+			return ch
+		end
+		uv.sleep(poll_ms)
+		elapsed = elapsed + poll_ms
 	end
 
-	if ch == "\0" or ch == "" then
-		return nil
-	end
-	return ch
+	return nil -- timed out
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -254,131 +264,153 @@ local function one_indent()
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Selection geometry (handles charwise, linewise, blockwise)
+-- Selection geometry
 -- ─────────────────────────────────────────────────────────────────────────────
-
---[[
-  Returns a list of "spans", one per logical region to surround.
-  Each span: { srow, scol, erow, ecol }   (all 0-indexed, ecol exclusive)
-
-  Visual modes (detected from vis_mode parameter, captured before <Esc>):
-    "v"  – charwise   → one span covering the exact selection
-    "V"  – linewise   → one span covering full lines (scol=0, ecol=line length)
-    "\22"– blockwise  → one span per line in the block, same column bounds
-]]
-
-local VISUAL_BLOCK = R("<C-v>") -- "\22"
 
 local function get_spans(vis_mode)
 	local buf = vim.api.nvim_get_current_buf()
-
-	local srow = vim.fn.line("'<") - 1
+	local srow = vim.fn.line("'<") - 1 -- 0-indexed
 	local erow = vim.fn.line("'>") - 1
 
-	-- Helper: safe exclusive end-col for a given 0-indexed row.
-	-- Clamps to the actual byte length of that line.
-	local function safe_ecol(row, raw_col)
+	-- Clamp a column to [0, #line] so buf API never gets an out-of-range index.
+	local function safe_col(row, col)
 		local line = vim.api.nvim_buf_get_lines(buf, row, row + 1, false)[1] or ""
-		-- Neovim uses 2147483647 as a sentinel meaning "end of line" in some APIs
-		if raw_col >= #line then
-			return #line
-		end
-		return raw_col
+		return math.min(col, #line)
 	end
 
 	if vis_mode == "V" then
-		-- Linewise: span full lines.
-		local spans = {}
-		for row = srow, erow do
-			local line = vim.api.nvim_buf_get_lines(buf, row, row + 1, false)[1] or ""
-			-- Strip trailing newline sentinel if present, clamp to line length.
-			table.insert(spans, { srow = row, scol = 0, erow = row, ecol = #line })
+		if config.visual_lines_separate then
+			-- Each line is its own span.
+			local spans = {}
+			for row = srow, erow do
+				local line = vim.api.nvim_buf_get_lines(buf, row, row + 1, false)[1] or ""
+				table.insert(spans, { srow = row, scol = 0, erow = row, ecol = #line })
+			end
+			return spans
+		else
+			-- Whole line range is one span.
+			local last_line = vim.api.nvim_buf_get_lines(buf, erow, erow + 1, false)[1] or ""
+			return { { srow = srow, scol = 0, erow = erow, ecol = #last_line } }
 		end
-		return spans
-	elseif vis_mode == VISUAL_BLOCK then
-		-- Blockwise: same column bounds on every row.
-		-- col("'<") and col("'>") may be swapped if selection was made right→left;
-		-- always use the smaller as start col.
-		local c1 = vim.fn.col("'<") - 1
-		local c2 = vim.fn.col("'>") -- exclusive
-
-		-- Ensure c1 <= c2 - 1  (i.e. start <= end)
-		local block_scol = math.min(c1, c2 - 1)
-		local block_ecol = math.max(c1, c2 - 1) + 1 -- exclusive
+	elseif vis_mode == BYTE_CTRLV then
+		-- Blockwise: one span per row, same column bounds.
+		local c1 = vim.fn.col("'<") - 1 -- 0-indexed inclusive
+		local c2 = vim.fn.col("'>") - 1 -- 0-indexed inclusive
+		local block_scol = math.min(c1, c2)
+		local block_ecol = math.max(c1, c2) + 1 -- exclusive
 
 		local spans = {}
 		for row = srow, erow do
-			local sc = safe_ecol(row, block_scol)
-			local ec = safe_ecol(row, block_ecol)
-			-- Skip rows that don't reach the block start column.
-			if sc <= ec then
+			local sc = safe_col(row, block_scol)
+			local ec = safe_col(row, block_ecol)
+			if sc < ec then
 				table.insert(spans, { srow = row, scol = sc, erow = row, ecol = ec })
 			end
 		end
 		return spans
 	else
-		-- Charwise (default).
+		-- Charwise.
 		local sc = vim.fn.col("'<") - 1
-		local ec = vim.fn.col("'>")
-		ec = safe_ecol(erow, ec)
+		local ec = safe_col(erow, vim.fn.col("'>"))
 		return { { srow = srow, scol = sc, erow = erow, ecol = ec } }
 	end
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Core: apply surrounding to one span
+-- Build replacement lines from open/close strings + content
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- Returns the row offset introduced by the replacement (lines added - lines removed).
+--[[
+  open and close may contain "\n".  We split both into line arrays and
+  assemble the final replacement list by concatenating:
+
+    open_lines[1..n-1]  (own lines, if any)
+    open_lines[n] .. space_pad .. content_lines[1]
+    content_lines[2..m-1]
+    content_lines[m] .. space_pad .. close_lines[1]
+    close_lines[2..p]   (own lines, if any)
+
+  When newline_count > 0 the content is indented and the open/close go on
+  their own lines regardless of whether they already contain "\n".
+]]
+
+local function build_replacement(open, close, content_lines, space_count, newline_count, base_indent)
+	local open_parts = split_lines(open)
+	local close_parts = split_lines(close)
+	local pad = string.rep(" ", space_count)
+
+	if newline_count > 0 then
+		-- Newline-padding mode: indent content one level deeper.
+		local inner_indent = base_indent .. one_indent()
+		local indented = {}
+		for i, l in ipairs(content_lines) do
+			if i == 1 then
+				indented[i] = inner_indent .. l
+			else
+				indented[i] = inner_indent .. (l:match("^%s*(.*)$") or l)
+			end
+		end
+
+		-- open goes on its own line(s); close is prefixed with base_indent.
+		-- If open itself contains newlines, preserve them.
+		local result = {}
+		for _, l in ipairs(open_parts) do
+			table.insert(result, l)
+		end
+		for _, l in ipairs(indented) do
+			table.insert(result, l)
+		end
+		-- Prefix every close_part line with base_indent.
+		for i, l in ipairs(close_parts) do
+			table.insert(result, (i == 1 and base_indent or base_indent) .. l)
+		end
+		return result
+	end
+
+	-- Flat (space-pad or no pad) mode.
+	-- Merge open into the front and close into the back of the content.
+	local result = vim.deepcopy(content_lines)
+
+	-- Attach last open_part to front of content, prepend earlier open_parts.
+	result[1] = open_parts[#open_parts] .. pad .. result[1]
+	for i = #open_parts - 1, 1, -1 do
+		table.insert(result, 1, open_parts[i])
+	end
+
+	-- Attach first close_part to back of content, append later close_parts.
+	result[#result] = result[#result] .. pad .. close_parts[1]
+	for i = 2, #close_parts do
+		table.insert(result, close_parts[i])
+	end
+
+	return result
+end
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Apply surrounding to a single span
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Returns the number of new lines introduced (replacement_lines - original_lines).
 local function apply_span(buf, span, open, close, space_count, newline_count)
 	local srow = span.srow
 	local scol = span.scol
 	local erow = span.erow
 	local ecol = span.ecol
 
-	local lines = vim.api.nvim_buf_get_text(buf, srow, scol, erow, ecol, {})
-	if #lines == 0 then
+	local content = vim.api.nvim_buf_get_text(buf, srow, scol, erow, ecol, {})
+	if #content == 0 then
 		return 0
 	end
 
-	local replacement
-	local row_delta = 0
-
-	if newline_count > 0 then
-		local base_indent = line_indent(srow + 1)
-		local inner_indent = base_indent .. one_indent()
-
-		local content = {}
-		for i, l in ipairs(lines) do
-			if i == 1 then
-				content[i] = inner_indent .. l
-			else
-				content[i] = inner_indent .. (l:match("^%s*(.*)$") or l)
-			end
-		end
-
-		replacement = { open }
-		for _, cl in ipairs(content) do
-			table.insert(replacement, cl)
-		end
-		table.insert(replacement, base_indent .. close)
-
-		-- We replaced (erow - srow + 1) original lines with #replacement lines.
-		row_delta = #replacement - (erow - srow + 1)
-	else
-		local pad = string.rep(" ", space_count)
-		replacement = vim.deepcopy(lines)
-		replacement[1] = open .. pad .. replacement[1]
-		replacement[#replacement] = replacement[#replacement] .. pad .. close
-		row_delta = 0 -- same number of lines
-	end
+	local base_indent = line_indent(srow + 1)
+	local replacement = build_replacement(open, close, content, space_count, newline_count, base_indent)
 
 	vim.api.nvim_buf_set_text(buf, srow, scol, erow, ecol, replacement)
-	return row_delta
+	return #replacement - #content -- net line delta
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Main apply entry-point (handles multi-span, cursor placement)
+-- Main apply entry-point
 -- ─────────────────────────────────────────────────────────────────────────────
 
 local function apply_surround(open, close, space_count, newline_count, vis_mode)
@@ -388,114 +420,89 @@ local function apply_surround(open, close, space_count, newline_count, vis_mode)
 		return
 	end
 
-	-- Apply spans in reverse order so earlier row indices stay valid.
-	local row_offsets = {}
+	-- Process in reverse so row indices of earlier spans stay valid.
 	for i = #spans, 1, -1 do
-		local delta = apply_span(buf, spans[i], open, close, space_count, newline_count)
-		row_offsets[i] = delta
+		apply_span(buf, spans[i], open, close, space_count, newline_count)
 	end
 
-	-- Move cursor to start of content in the first span.
+	-- Cursor: place at the start of content in the first span.
 	local first = spans[1]
+	local open_parts = split_lines(open)
+
 	if newline_count > 0 then
-		local inner_row = first.srow + 2 -- 1-indexed: srow+1 is open, srow+2 is content
+		-- Content starts on the line after all open_parts lines.
+		local content_row = first.srow + #open_parts + 1 -- 1-indexed
 		local base_indent = line_indent(first.srow + 1)
 		local inner_col = #(base_indent .. one_indent())
-		vim.api.nvim_win_set_cursor(0, { inner_row, inner_col })
+		vim.api.nvim_win_set_cursor(0, { content_row, inner_col })
 	else
 		local pad = string.rep(" ", space_count)
-		vim.api.nvim_win_set_cursor(0, { first.srow + 1, first.scol + #open + #pad })
+		-- open may have multiple lines; cursor is after the last open_part + pad.
+		local cursor_row = first.srow + #open_parts -- 1-indexed (srow+1 + open_parts-1)
+		local cursor_col = (
+			#open_parts == 1 and first.scol + #open_parts[#open_parts] + #pad or #open_parts[#open_parts] + #pad
+		)
+		vim.api.nvim_win_set_cursor(0, { cursor_row, cursor_col })
 	end
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Dot-repeat
 -- ─────────────────────────────────────────────────────────────────────────────
-
 --[[
-  Dot-repeat strategy
-  ───────────────────
-  Neovim's native `.` repeats the last *normal-mode* change.  Visual-mode
-  operations don't integrate with it automatically.
+  Strategy
+  ────────
+  After every successful surround we store the operation params in `last_op`
+  and install a temporary `n .` keymap.
 
-  Our approach:
-    1. After every successful surround we store the parameters in `last_op`.
-    2. We set `operatorfunc` to a thin wrapper that re-applies those parameters.
-    3. We call `g@` with the motion `gv` (re-select last visual selection).
-       In practice we map `.` in normal mode, temporarily, so that the very next
-       `.` press re-runs the operation on the current visual selection (`gv`).
+  When `.` is pressed:
+    • `'<` / `'>` still hold the marks from the previous visual selection.
+    • We call apply_surround directly with those marks and the saved params.
+    • No re-entering of visual mode is needed or wanted.
 
-  The cleanest way that works without vim-repeat:
-    - After success, store params.
-    - Map `<dot>` in normal mode to: `gv` (re-enter visual) then trigger our
-      operatorfunc via `<Cmd>lua require("surrounded")._repeat()<CR>`.
-    - The repeat function reads `last_op`, re-enters visual (`gv`), and calls
-      apply_surround with the same params.
-    - We use a one-shot autocmd on ModeChanged to detect when the user leaves
-      normal mode without using `.`, at which point we clear the dot mapping
-      so it doesn't interfere with anything else.
+  The `.` keymap is cleared on the next TextChanged / InsertEnter /
+  CmdlineEnter so it never permanently replaces the native `.`.
 
-  Note: we do NOT clobber the global `.` permanently – it is only active after a
-  surround operation and is cleared the moment the user makes any other change.
+  Why not operatorfunc / g@?
+    g@ requires a motion and the result is counted as a normal-mode change,
+    which means the native `.` will try to replay `g@<motion>` on subsequent
+    presses, which is fragile.  Our one-shot keymap approach is simpler and
+    more reliable.
 ]]
 
-local dot_ns = vim.api.nvim_create_namespace("surrounded_dot")
 local dot_augrp = vim.api.nvim_create_augroup("surrounded_dot", { clear = true })
 
 local function clear_dot_repeat()
-	-- Remove our temporary normal-mode `.` mapping.
 	pcall(vim.keymap.del, "n", ".")
 	vim.api.nvim_clear_autocmds({ group = dot_augrp })
 end
 
 local function setup_dot_repeat(op)
 	last_op = op
-	clear_dot_repeat() -- remove any previous binding first
+	clear_dot_repeat()
 
 	vim.keymap.set("n", ".", function()
 		clear_dot_repeat()
-		if not last_op then
+		local lo = last_op
+		if not lo then
 			return
 		end
-		-- Re-select the previous visual selection then apply.
-		-- We need to know the visual mode that was active; it is stored in last_op.
-		local lo = last_op
-
-		-- Re-enter the correct visual mode on '< '>
-		local resel_key
-		if lo.vis_mode == "V" then
-			resel_key = R("'<V'>")
-		elseif lo.vis_mode == R("<C-v>") then
-			resel_key = R("'<") .. R("<C-v>") .. R("'>")
-		else
-			resel_key = R("'<v'>")
-		end
-		vim.api.nvim_feedkeys(resel_key, "nx", false)
-
-		-- After the feedkeys the mode is visual; call apply directly.
-		vim.schedule(function()
-			-- ESC to commit '< '> then apply.
-			vim.api.nvim_feedkeys(BYTE_ESC, "x", false)
-			vim.schedule(function()
-				apply_surround(lo.open, lo.close, lo.space_count, lo.newline_count, lo.vis_mode)
-			end)
-		end)
+		-- '< and '> still point at the last visual selection.
+		-- Apply directly; no need to re-enter visual mode.
+		apply_surround(lo.open, lo.close, lo.space_count, lo.newline_count, lo.vis_mode)
+		-- Re-arm so the user can press `.` again.
+		setup_dot_repeat(lo)
 	end, {
 		desc = "surrounded: repeat last surround",
 		noremap = true,
 		silent = true,
-		buffer = false,
 	})
 
-	-- Clear dot mapping if the user does anything else (TextChanged, InsertEnter,
-	-- any normal-mode key that isn't `.`).
+	-- Disarm when the user does anything other than `.`.
 	vim.api.nvim_create_autocmd({ "TextChanged", "InsertEnter", "CmdlineEnter" }, {
 		group = dot_augrp,
 		once = true,
-		callback = function()
-			-- Only clear if it wasn't a dot-repeat that caused TextChanged.
-			vim.schedule(clear_dot_repeat)
-		end,
+		callback = vim.schedule_wrap(clear_dot_repeat),
 	})
 end
 
@@ -503,11 +510,23 @@ end
 -- Input loop
 -- ─────────────────────────────────────────────────────────────────────────────
 
+-- Finish a successful operation: apply + arm dot-repeat.
+local function finish(open, close, space_count, newline_count, vis_mode)
+	apply_surround(open, close, space_count, newline_count, vis_mode)
+	setup_dot_repeat({
+		open = open,
+		close = close,
+		space_count = space_count,
+		newline_count = newline_count,
+		vis_mode = vis_mode,
+	})
+end
+
 local function read_surround(vis_mode)
 	local lookup = build_lookup()
 	local accept_raw = R(config.accept)
 
-	-- ── Phase 1: padding ─────────────────────────────────────────────────────
+	-- ── Phase 1: collect padding ──────────────────────────────────────────────
 	local space_count = 0
 	local newline_count = 0
 	local ch = vim.fn.getcharstr()
@@ -527,7 +546,18 @@ local function read_surround(vis_mode)
 		end
 	end
 
-	-- ── Phase 2: delimiter ───────────────────────────────────────────────────
+	-- ── Phase 2: collect delimiter ────────────────────────────────────────────
+	--
+	-- Rules (evaluated after each character is accumulated into `prefix`):
+	--
+	--   A) exact + not extendable  →  execute immediately (unambiguous, no delay)
+	--   B) exact + extendable      →  wait up to `timeout` ms for the next char
+	--        timeout / ESC / accept key  → accept the shorter match
+	--        char that cannot extend     → accept shorter (auto_terminate) OR warn+abort
+	--        char that can  extend       → extend prefix, loop
+	--   C) not exact + extendable  →  read next char (blocking, no timeout; not valid yet)
+	--   D) not exact + not extendable → abort
+
 	local prefix = ch
 
 	while true do
@@ -535,6 +565,7 @@ local function read_surround(vis_mode)
 			return
 		end
 
+		-- <CR> pressed as the very first delimiter character means "nothing to accept".
 		if prefix == accept_raw then
 			vim.notify("surrounded: nothing to accept", vim.log.levels.WARN)
 			return
@@ -542,38 +573,25 @@ local function read_surround(vis_mode)
 
 		local exact, extendable = find_candidates(lookup, prefix)
 
+		-- ── D ────────────────────────────────────────────────────────────────
 		if not exact and not extendable then
 			vim.notify("surrounded: no surround mapped to '" .. prefix .. "'", vim.log.levels.WARN)
 			return
 		end
 
+		-- ── A ────────────────────────────────────────────────────────────────
 		if exact and not extendable then
-			-- Unambiguous → instant execution.
-			apply_surround(exact[1].open, exact[1].close, space_count, newline_count, vis_mode)
-			setup_dot_repeat({
-				open = exact[1].open,
-				close = exact[1].close,
-				space_count = space_count,
-				newline_count = newline_count,
-				vis_mode = vis_mode,
-			})
+			finish(exact[1].open, exact[1].close, space_count, newline_count, vis_mode)
 			return
 		end
 
+		-- ── B ────────────────────────────────────────────────────────────────
 		if exact and extendable then
-			-- Ambiguous: valid shorter match exists, longer possible → use timeout.
 			local next_ch = getchar_with_timeout(config.timeout)
 
 			if next_ch == nil then
-				-- Timed out → accept shorter.
-				apply_surround(exact[1].open, exact[1].close, space_count, newline_count, vis_mode)
-				setup_dot_repeat({
-					open = exact[1].open,
-					close = exact[1].close,
-					space_count = space_count,
-					newline_count = newline_count,
-					vis_mode = vis_mode,
-				})
+				-- Timed out.
+				finish(exact[1].open, exact[1].close, space_count, newline_count, vis_mode)
 				return
 			end
 
@@ -582,47 +600,32 @@ local function read_surround(vis_mode)
 			end
 
 			if next_ch == accept_raw then
-				apply_surround(exact[1].open, exact[1].close, space_count, newline_count, vis_mode)
-				setup_dot_repeat({
-					open = exact[1].open,
-					close = exact[1].close,
-					space_count = space_count,
-					newline_count = newline_count,
-					vis_mode = vis_mode,
-				})
+				finish(exact[1].open, exact[1].close, space_count, newline_count, vis_mode)
 				return
 			end
 
-			-- Check if next_ch can extend the prefix.
+			-- Can this character extend the current prefix?
 			local extended = prefix .. next_ch
-			local _, ext2 = find_candidates(lookup, extended)
-			local exact2 = lookup[extended]
+			local exact2, ext2 = find_candidates(lookup, extended)
 
 			if not exact2 and not ext2 then
-				-- next_ch cannot extend prefix at all.
+				-- Cannot extend.
 				if config.auto_terminate then
-					-- Accept current exact match, feed next_ch back.
-					apply_surround(exact[1].open, exact[1].close, space_count, newline_count, vis_mode)
-					setup_dot_repeat({
-						open = exact[1].open,
-						close = exact[1].close,
-						space_count = space_count,
-						newline_count = newline_count,
-						vis_mode = vis_mode,
-					})
-					-- Feed the unrecognised char back so Neovim processes it normally.
+					finish(exact[1].open, exact[1].close, space_count, newline_count, vis_mode)
 					vim.api.nvim_feedkeys(next_ch, "n", false)
 					return
 				else
-					-- Without auto_terminate, warn and abort.
 					vim.notify("surrounded: '" .. next_ch .. "' cannot extend '" .. prefix .. "'", vim.log.levels.WARN)
 					return
 				end
 			end
 
 			prefix = extended
-		else
-			-- extendable but no exact match: read more (no timeout, nothing valid yet).
+			-- Loop back: re-evaluate the new prefix (may itself be exact / extendable).
+		end
+
+		-- ── C ────────────────────────────────────────────────────────────────
+		if not exact and extendable then
 			local next_ch = vim.fn.getcharstr()
 			if next_ch == BYTE_ESC then
 				return
@@ -642,13 +645,8 @@ end
 
 local function register_keymap()
 	vim.keymap.set("x", config.surround, function()
-		-- Capture the visual mode BEFORE leaving visual mode.
-		-- mode() returns "v", "V", or "\22" (CTRL-V) while still in visual mode.
-		local vis_mode = vim.fn.mode()
-
-		-- Leave visual mode so '< and '> get committed.
+		local vis_mode = vim.fn.mode() -- capture BEFORE leaving visual mode
 		vim.api.nvim_feedkeys(BYTE_ESC, "x", false)
-
 		vim.schedule(function()
 			read_surround(vis_mode)
 		end)
