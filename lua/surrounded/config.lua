@@ -1,3 +1,6 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Default configuration
+-- ─────────────────────────────────────────────────────────────────────────────
 return {
 	-- Key pressed in visual mode to trigger surrounding.
 	surround = "S",
@@ -28,9 +31,15 @@ return {
 	visual_lines_separate = true,
 
 	-- ── Symmetric delimiters ─────────────────────────────────────────────────
-	-- You can say: { delimiter = "|", pad = " " },
+	-- open == close (or a single key with an explicit delimiter string).
+	-- Shapes:
+	--   "**"                          key="**", open="**", close="**"
+	--   { key="=", delimiter="==" }   pressing `=` yields  ==…==
+	--   { delimiter="|", pad=" " }    pressing `|` yields  | … |
+	--   { key="``", open="```\n", close="\n```" }   newlines in open/close are fine
 	units = {
 		-- Single as Single
+		-- stylua: ignore (RIP)
 		"`",
 		"~",
 		"!",
@@ -45,18 +54,25 @@ return {
 		"-",
 		"_",
 		"+",
+		"=",
+		-- stylua: ignore (RIP)
 		"'",
 		'"',
 		"|",
 		"/",
+		",",
+		".",
+		"?",
+		":",
+		";",
 
 		-- Single as Double
-		{ key = "=", delimiter = "==" },
+		-- { key = "=", delimiter = "==" },
 
 		-- Double as Double
 		-- "**",
 
-		-- Special
+		-- Special (I include the capitalized variant because I might still be holding shift)
 		-- Italics
 		{ key = "i", delimiter = "*" },
 		{ key = "I", delimiter = "*" },
@@ -66,14 +82,21 @@ return {
 		-- Highlight
 		{ key = "h", delimiter = "==" },
 		{ key = "H", delimiter = "==" },
+		-- Code Block
+		{ key = "``", delimiter = "```", pad = "\n" },
 	},
 
 	-- ── Asymmetric delimiters ─────────────────────────────────────────────────
+	-- open ≠ close.  Key defaults to `open`.
+	-- Shapes:
+	--   { open="[", close="]" }
+	--   { key="[", open="[ ", close=" ]" }
+	--   { open="[", close="]", pad=" " }
+	--   { open="```\n", close="\n```" }   newlines in open/close are fine
 	pairs = {
 		{ open = "[", close = "]" },
 		{ open = "(", close = ")" },
 		{ open = "{", close = "}" },
 		{ open = "<", close = ">" },
-		{ key = "``", open = "```", close = "```", pad = "\n" },
 	},
 }

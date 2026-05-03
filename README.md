@@ -12,7 +12,7 @@ Surround visual selections with configurable delimiters. Supports charwise, line
 - `auto_terminate`: unknown chars accept shorter match and are fed back to Neovim
 - Newlines inside `open`/`close` strings
 - `visual_lines_separate`: control whether linewise mode surrounds each line or the whole region
-- Dot-repeat with `.`
+- Dot-repeat with `.` (currently not working)
 
 ---
 
@@ -21,8 +21,9 @@ Surround visual selections with configurable delimiters. Supports charwise, line
 ```lua
 -- lazy.nvim
 {
-  dir = "~/path/to/surrounded",
-  opts = {},   -- all defaults
+  "MasterTemple/surrounded.nvim",
+  event = "VeryLazy",
+  opts  = {}, -- all defaults
 }
 ```
 
@@ -81,7 +82,11 @@ units = {
 }
 ```
 
-Selecting `some code` and pressing `` S`` `` gives:
+Selecting `some code` and pressing
+```
+S``
+```
+gives:
 
 ````
 ```
@@ -147,11 +152,11 @@ require("surrounded").setup({
   units = {
     "*",
     "**",
-    "==",
+    -- Explicit key:
     { key = "=",  delimiter = "==" },
     { delimiter = "|", pad = " " },
     -- Markdown fenced code block:
-    { key = "``", open = "```\n", close = "\n```" },
+    { key = "``", delimiter = "```", pad = "\n" },
   },
 
   pairs = {
@@ -159,11 +164,6 @@ require("surrounded").setup({
     { open = "(",  close = ")"  },
     { open = "{",  close = "}"  },
     { open = "<",  close = ">"  },
-    { open = '"',  close = '"'  },
-    { open = "'",  close = "'"  },
-    { open = "`",  close = "`"  },
-    -- Explicit key:
-    -- { key = "b", open = "**", close = "**" }
     -- Pad shorthand:
     -- { open = "[", close = "]", pad = " " }  →  [ … ]
   },
