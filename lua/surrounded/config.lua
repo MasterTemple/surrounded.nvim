@@ -96,7 +96,7 @@ return {
 	pairs = {
 		{ open = "[", close = "]" },
 		{ open = "(", close = ")" },
-		{ open = "{", close = "}" },
+		{ open = "{", close = "}", pad = " " },
 		{ open = "<", close = ">" },
 	},
 }

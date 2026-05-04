@@ -1,6 +1,6 @@
 # surrounded.nvim
 
-Surround visual selections with configurable delimiters. Supports charwise, linewise, and blockwise visual modes.
+Surround charwise, linewise, and blockwise visual selections with configurable, optionally padded, smart-terminated delimiters
 
 ---
 
