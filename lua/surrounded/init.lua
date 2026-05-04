@@ -99,12 +99,12 @@ end
 local function build_lookup()
 	local lookup = {}
 
-	local function add(key_str, open, close)
+	local function add(key_str, open, pad, close)
 		local raw = R(key_str)
 		if not lookup[raw] then
 			lookup[raw] = {}
 		end
-		table.insert(lookup[raw], { open = open, close = close })
+		table.insert(lookup[raw], { open = open, pad = pad, close = close })
 	end
 
 	for _, u in ipairs(config.units) do
@@ -113,11 +113,11 @@ local function build_lookup()
 		elseif type(u) == "table" then
 			local delim = u.delimiter or u.key or u[1]
 			local key = u.key or delim
-			if u.pad then
-				add(key, delim .. u.pad, u.pad .. delim)
-			else
-				add(key, delim, delim)
-			end
+			-- if u.pad then
+			-- 	add(key, delim .. u.pad, u.pad .. delim)
+			-- else
+			add(key, delim, u.pad, delim)
+			-- end
 		end
 	end
 
@@ -125,11 +125,11 @@ local function build_lookup()
 		local key = p.key or p.open
 		local open = p.open
 		local close = p.close
-		if p.pad then
-			open = open .. p.pad
-			close = p.pad .. close
-		end
-		add(key, open, close)
+		-- if p.pad then
+		-- 	open = open .. p.pad
+		-- 	close = p.pad .. close
+		-- end
+		add(key, open, p.pad, close)
 	end
 
 	return lookup
@@ -329,7 +329,12 @@ end
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- Returns the number of new lines introduced (replacement_lines - original_lines).
-local function apply_span(buf, span, open, close, space_count, newline_count)
+local function apply_span(buf, span, open, pad, close, space_count, newline_count)
+	-- Apply default padding late, if no other padding was explicitly provided
+	if space_count == 0 and newline_count == 0 and pad ~= nil then
+		open = open .. pad
+		close = pad .. close
+	end
 	local srow = span.srow
 	local scol = span.scol
 	local erow = span.erow
@@ -351,7 +356,7 @@ end
 -- Main apply entry-point
 -- ─────────────────────────────────────────────────────────────────────────────
 
-local function apply_surround(open, close, space_count, newline_count, vis_mode)
+local function apply_surround(open, pad, close, space_count, newline_count, vis_mode)
 	local buf = vim.api.nvim_get_current_buf()
 	local spans = get_spans(vis_mode)
 	if #spans == 0 then
@@ -360,7 +365,7 @@ local function apply_surround(open, close, space_count, newline_count, vis_mode)
 
 	-- Process in reverse so row indices of earlier spans stay valid.
 	for i = #spans, 1, -1 do
-		apply_span(buf, spans[i], open, close, space_count, newline_count)
+		apply_span(buf, spans[i], open, pad, close, space_count, newline_count)
 	end
 
 	-- Cursor: place at the start of content in the first span.
@@ -427,7 +432,7 @@ local function setup_dot_repeat(op)
 		end
 		-- '< and '> still point at the last visual selection.
 		-- Apply directly; no need to re-enter visual mode.
-		apply_surround(lo.open, lo.close, lo.space_count, lo.newline_count, lo.vis_mode)
+		apply_surround(lo.open, lo.pad, lo.close, lo.space_count, lo.newline_count, lo.vis_mode)
 		-- Re-arm so the user can press `.` again.
 		setup_dot_repeat(lo)
 	end, {
@@ -449,11 +454,16 @@ end
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- Finish a successful operation: apply + arm dot-repeat.
-local function finish(open, close, space_count, newline_count, vis_mode)
-	apply_surround(open, close, space_count, newline_count, vis_mode)
+-- local function finish(open, close, space_count, newline_count, vis_mode)
+local function finish(entry, space_count, newline_count, vis_mode)
+	local open = entry.open
+	local close = entry.close
+	local pad = entry.pad
+	apply_surround(open, pad, close, space_count, newline_count, vis_mode)
 	setup_dot_repeat({
 		open = open,
 		close = close,
+		pad = pad,
 		space_count = space_count,
 		newline_count = newline_count,
 		vis_mode = vis_mode,
@@ -519,7 +529,7 @@ local function read_surround(vis_mode)
 
 		-- ── A ────────────────────────────────────────────────────────────────
 		if exact and not extendable then
-			finish(exact[1].open, exact[1].close, space_count, newline_count, vis_mode)
+			finish(exact[1], space_count, newline_count, vis_mode)
 			return
 		end
 
@@ -529,7 +539,7 @@ local function read_surround(vis_mode)
 
 			if next_ch == nil then
 				-- Timed out.
-				finish(exact[1].open, exact[1].close, space_count, newline_count, vis_mode)
+				finish(exact[1], space_count, newline_count, vis_mode)
 				return
 			end
 
@@ -538,7 +548,7 @@ local function read_surround(vis_mode)
 			end
 
 			if next_ch == accept_raw then
-				finish(exact[1].open, exact[1].close, space_count, newline_count, vis_mode)
+				finish(exact[1], space_count, newline_count, vis_mode)
 				return
 			end
 
@@ -549,7 +559,7 @@ local function read_surround(vis_mode)
 			if not exact2 and not ext2 then
 				-- Cannot extend.
 				if config.auto_terminate then
-					finish(exact[1].open, exact[1].close, space_count, newline_count, vis_mode)
+					finish(exact[1], space_count, newline_count, vis_mode)
 					vim.api.nvim_feedkeys(next_ch, "n", false)
 					return
 				else
