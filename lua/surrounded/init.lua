@@ -109,15 +109,11 @@ local function build_lookup()
 
 	for _, u in ipairs(config.units) do
 		if type(u) == "string" then
-			add(u, u, u)
+			add(u, u, nil, u)
 		elseif type(u) == "table" then
 			local delim = u.delimiter or u.key or u[1]
 			local key = u.key or delim
-			-- if u.pad then
-			-- 	add(key, delim .. u.pad, u.pad .. delim)
-			-- else
 			add(key, delim, u.pad, delim)
-			-- end
 		end
 	end
 
@@ -125,10 +121,6 @@ local function build_lookup()
 		local key = p.key or p.open
 		local open = p.open
 		local close = p.close
-		-- if p.pad then
-		-- 	open = open .. p.pad
-		-- 	close = p.pad .. close
-		-- end
 		add(key, open, p.pad, close)
 	end
 
@@ -380,6 +372,9 @@ local function apply_surround(open, pad, close, space_count, newline_count, vis_
 		vim.api.nvim_win_set_cursor(0, { content_row, inner_col })
 	else
 		local pad = string.rep(" ", space_count)
+		if space_count == 0 then
+			pad = pad
+		end
 		-- open may have multiple lines; cursor is after the last open_part + pad.
 		local cursor_row = first.srow + #open_parts -- 1-indexed (srow+1 + open_parts-1)
 		local cursor_col = (
