@@ -12,7 +12,7 @@ Surround charwise, linewise, and blockwise visual selections with configurable, 
 - `auto_terminate`: unknown chars accept shorter match and are fed back to Neovim
 - Newlines inside `open`/`close` strings
 - `visual_lines_separate`: control whether linewise mode surrounds each line or the whole region
-- Dot-repeat with `.` (currently not working)
+- Native dot-repeat with `.` (and works in macros)
 
 ---
 
@@ -133,7 +133,15 @@ With `auto_terminate = true` (default) and both `*` / `**` configured:
 
 ### Dot-repeat
 
-After any surround operation, press `.` in normal mode to re-apply the same surround to the previous visual selection (`'<` / `'>`). Press `.` again to repeat. The binding is cleared the moment any other edit is made.
+Surrounding is a real operator (implemented with `g@`/`'operatorfunc'`), so Neovim's native `.` repeats it, just like built-in visual operators such as `vU` or `v~`: the same surround is applied to the **same amount of text, starting at the cursor**, without asking for the delimiter again.
+
+- charwise: the same number of characters (`veS"` then `W.` quotes the next word if it has the same length)
+- linewise: the same number of lines
+- blockwise: a block of the same size
+
+Each surround (and each `.`) is a single undo step, and it works inside macros and `:normal`.
+
+With `visual_repeat = true` (the default), you can also make a **new visual selection and press `.`** to apply the last surround to exactly that selection.
 
 ---
 
@@ -144,6 +152,7 @@ require("surrounded").setup({
   surround              = "S",     -- visual-mode trigger
   accept                = "<CR>",  -- accept ambiguous shorter match (delimiter phase)
   timeout               = 500,     -- ms before auto-accepting shorter ambiguous match
+  visual_repeat         = true,    -- `.` in visual mode re-applies the last surround
   auto_terminate        = true,    -- accept shorter when next char can't extend prefix
   visual_lines_separate = false,   -- linewise: one region (false) or per-line (true)
 
@@ -205,3 +214,11 @@ require("surrounded").setup({
 ## Attribution
 
 Thank you Claude 🫡
+
+---
+
+## Tests
+
+```sh
+nvim --headless -u NONE -i NONE -l tests/run.lua
+```

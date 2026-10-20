@@ -30,6 +30,10 @@ return {
 	-- When false, the whole line-range is treated as one region.
 	visual_lines_separate = true,
 
+	-- When true, pressing `.` in visual mode re-applies the last surround to the
+	-- current selection. (Normal-mode `.` always works natively.)
+	visual_repeat = true,
+
 	-- ── Symmetric delimiters ─────────────────────────────────────────────────
 	-- open == close (or a single key with an explicit delimiter string).
 	-- Shapes:
@@ -58,6 +62,7 @@ return {
 		-- stylua: ignore (RIP)
 		"'",
 		'"',
+		"\\",
 		"|",
 		"/",
 		",",

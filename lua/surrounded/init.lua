@@ -37,7 +37,6 @@ end
 
 local BYTE_CR = R("<CR>") -- \r
 local BYTE_ESC = R("<Esc>") -- \27
-local BYTE_CTRLV = R("<C-v>") -- \22  (visual block mode indicator)
 
 -- Split a string on literal "\n" characters into a list of lines.
 -- "foo\nbar"  →  {"foo", "bar"}
@@ -197,18 +196,35 @@ end
 -- Selection geometry
 -- ─────────────────────────────────────────────────────────────────────────────
 
-local function get_spans(vis_mode)
+-- `motion` is the type passed to 'operatorfunc': "char", "line" or "block".
+-- The region is read from the `[ / `] marks, which g@ sets both for the
+-- original visual selection and when `.` replays it.
+local function get_spans(motion)
 	local buf = vim.api.nvim_get_current_buf()
-	local srow = vim.fn.line("'<") - 1 -- 0-indexed
-	local erow = vim.fn.line("'>") - 1
+	local start = vim.api.nvim_buf_get_mark(buf, "[") -- (1-indexed row, 0-indexed col)
+	local finish = vim.api.nvim_buf_get_mark(buf, "]")
+	local srow = start[1] - 1 -- 0-indexed
+	local erow = finish[1] - 1
+
+	local function get_line(row)
+		return vim.api.nvim_buf_get_lines(buf, row, row + 1, false)[1] or ""
+	end
 
 	-- Clamp a column to [0, #line] so buf API never gets an out-of-range index.
 	local function safe_col(row, col)
-		local line = vim.api.nvim_buf_get_lines(buf, row, row + 1, false)[1] or ""
-		return math.min(col, #line)
+		return math.min(col, #get_line(row))
 	end
 
-	if vis_mode == "V" then
+	-- Exclusive end column of the (possibly multibyte) character at `col`.
+	local function char_end(row, col)
+		local line = get_line(row)
+		if col >= #line then
+			return #line
+		end
+		return col + #vim.fn.strpart(line, col, 1, true)
+	end
+
+	if motion == "line" then
 		if config.visual_lines_separate then
 			-- Each line is its own span.
 			local spans = {}
@@ -222,12 +238,10 @@ local function get_spans(vis_mode)
 			local last_line = vim.api.nvim_buf_get_lines(buf, erow, erow + 1, false)[1] or ""
 			return { { srow = srow, scol = 0, erow = erow, ecol = #last_line } }
 		end
-	elseif vis_mode == BYTE_CTRLV then
+	elseif motion == "block" then
 		-- Blockwise: one span per row, same column bounds.
-		local c1 = vim.fn.col("'<") - 1 -- 0-indexed inclusive
-		local c2 = vim.fn.col("'>") - 1 -- 0-indexed inclusive
-		local block_scol = math.min(c1, c2)
-		local block_ecol = math.max(c1, c2) + 1 -- exclusive
+		local block_scol = math.min(start[2], finish[2]) -- 0-indexed inclusive
+		local block_ecol = math.max(start[2], finish[2]) + 1 -- exclusive
 
 		local spans = {}
 		for row = srow, erow do
@@ -240,8 +254,8 @@ local function get_spans(vis_mode)
 		return spans
 	else
 		-- Charwise.
-		local sc = vim.fn.col("'<") - 1
-		local ec = safe_col(erow, vim.fn.col("'>"))
+		local sc = safe_col(srow, start[2])
+		local ec = char_end(erow, finish[2])
 		return { { srow = srow, scol = sc, erow = erow, ecol = ec } }
 	end
 end
@@ -321,12 +335,7 @@ end
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- Returns the number of new lines introduced (replacement_lines - original_lines).
-local function apply_span(buf, span, open, pad, close, space_count, newline_count)
-	-- Apply default padding late, if no other padding was explicitly provided
-	if space_count == 0 and newline_count == 0 and pad ~= nil then
-		open = open .. pad
-		close = pad .. close
-	end
+local function apply_span(buf, span, open, close, space_count, newline_count)
 	local srow = span.srow
 	local scol = span.scol
 	local erow = span.erow
@@ -348,16 +357,24 @@ end
 -- Main apply entry-point
 -- ─────────────────────────────────────────────────────────────────────────────
 
-local function apply_surround(open, pad, close, space_count, newline_count, vis_mode)
+local function apply_surround(op, motion)
+	local open, close = op.open, op.close
+	local space_count, newline_count = op.space_count, op.newline_count
+	-- Apply the entry's default padding only if no padding was explicitly typed.
+	if space_count == 0 and newline_count == 0 and op.pad ~= nil then
+		open = open .. op.pad
+		close = op.pad .. close
+	end
+
 	local buf = vim.api.nvim_get_current_buf()
-	local spans = get_spans(vis_mode)
+	local spans = get_spans(motion)
 	if #spans == 0 then
 		return
 	end
 
 	-- Process in reverse so row indices of earlier spans stay valid.
 	for i = #spans, 1, -1 do
-		apply_span(buf, spans[i], open, pad, close, space_count, newline_count)
+		apply_span(buf, spans[i], open, close, space_count, newline_count)
 	end
 
 	-- Cursor: place at the start of content in the first span.
@@ -372,9 +389,6 @@ local function apply_surround(open, pad, close, space_count, newline_count, vis_
 		vim.api.nvim_win_set_cursor(0, { content_row, inner_col })
 	else
 		local pad = string.rep(" ", space_count)
-		if space_count == 0 then
-			pad = pad
-		end
 		-- open may have multiple lines; cursor is after the last open_part + pad.
 		local cursor_row = first.srow + #open_parts -- 1-indexed (srow+1 + open_parts-1)
 		local cursor_col = (
@@ -390,82 +404,54 @@ end
 --[[
   Strategy
   ────────
-  After every successful surround we store the operation params in `last_op`
-  and install a temporary `n .` keymap.
+  The surround is a real operator: once the delimiter has been read (while
+  still in visual mode) we store it in `last_op`, point 'operatorfunc' at
+  M.operatorfunc and run `g@` on the visual selection.
 
-  When `.` is pressed:
-    • `'<` / `'>` still hold the marks from the previous visual selection.
-    • We call apply_surround directly with those marks and the saved params.
-    • No re-entering of visual mode is needed or wanted.
-
-  The `.` keymap is cleared on the next TextChanged / InsertEnter /
-  CmdlineEnter so it never permanently replaces the native `.`.
-
-  Why not operatorfunc / g@?
-    g@ requires a motion and the result is counted as a normal-mode change,
-    which means the native `.` will try to replay `g@<motion>` on subsequent
-    presses, which is fragile.  Our one-shot keymap approach is simpler and
-    more reliable.
+  Because the change goes through g@, Neovim records it in its redo buffer
+  like any built-in visual operator (`vU`, `v~`, ...).  Pressing `.` replays
+  `g@` over the same amount of text starting at the cursor (same number of
+  characters / lines / block size), and M.operatorfunc re-applies `last_op`
+  without prompting for a delimiter again.  Each surround is a single undo step.
 ]]
 
-local dot_augrp = vim.api.nvim_create_augroup("surrounded_dot", { clear = true })
-
-local function clear_dot_repeat()
-	pcall(vim.keymap.del, "n", ".")
-	vim.api.nvim_clear_autocmds({ group = dot_augrp })
-end
-
-local function setup_dot_repeat(op)
-	last_op = op
-	clear_dot_repeat()
-
-	vim.keymap.set("n", ".", function()
-		clear_dot_repeat()
-		local lo = last_op
-		if not lo then
-			return
-		end
-		-- '< and '> still point at the last visual selection.
-		-- Apply directly; no need to re-enter visual mode.
-		apply_surround(lo.open, lo.pad, lo.close, lo.space_count, lo.newline_count, lo.vis_mode)
-		-- Re-arm so the user can press `.` again.
-		setup_dot_repeat(lo)
-	end, {
-		desc = "surrounded: repeat last surround",
-		noremap = true,
-		silent = true,
-	})
-
-	-- Disarm when the user does anything other than `.`.
-	vim.api.nvim_create_autocmd({ "TextChanged", "InsertEnter", "CmdlineEnter" }, {
-		group = dot_augrp,
-		once = true,
-		callback = vim.schedule_wrap(clear_dot_repeat),
-	})
+function M.operatorfunc(motion)
+	if last_op then
+		apply_surround(last_op, motion)
+	end
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Input loop
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- Finish a successful operation: apply + arm dot-repeat.
--- local function finish(open, close, space_count, newline_count, vis_mode)
-local function finish(entry, space_count, newline_count, vis_mode)
-	local open = entry.open
-	local close = entry.close
-	local pad = entry.pad
-	apply_surround(open, pad, close, space_count, newline_count, vis_mode)
-	setup_dot_repeat({
-		open = open,
-		close = close,
-		pad = pad,
-		space_count = space_count,
-		newline_count = newline_count,
-		vis_mode = vis_mode,
-	})
+-- Keys are inserted at the FRONT of typeahead ("i") so they run before any
+-- keys that are already queued (fast typing, macros, `:normal`).
+
+-- Leave visual mode without doing anything.
+local function abort()
+	vim.api.nvim_feedkeys(BYTE_ESC, "ni", false)
 end
 
-local function read_surround(vis_mode)
+-- Run `last_op` as a g@ operator on the visual selection.
+local function run_last_op()
+	vim.o.operatorfunc = "v:lua.require'surrounded'.operatorfunc"
+	vim.api.nvim_feedkeys("g@", "ni", false)
+end
+
+-- Finish a successful operation: store the op and run it as a g@ operator.
+local function finish(entry, space_count, newline_count)
+	last_op = {
+		open = entry.open,
+		close = entry.close,
+		pad = entry.pad,
+		space_count = space_count,
+		newline_count = newline_count,
+	}
+	run_last_op()
+end
+
+local function read_surround()
 	local lookup = build_lookup()
 	local accept_raw = R(config.accept)
 
@@ -476,7 +462,7 @@ local function read_surround(vis_mode)
 
 	while true do
 		if ch == BYTE_ESC then
-			return
+			return abort()
 		end
 		if is_newline_pad(ch) then
 			newline_count = newline_count + 1
@@ -505,13 +491,13 @@ local function read_surround(vis_mode)
 
 	while true do
 		if prefix == BYTE_ESC then
-			return
+			return abort()
 		end
 
 		-- <CR> pressed as the very first delimiter character means "nothing to accept".
 		if prefix == accept_raw then
 			vim.notify("surrounded: nothing to accept", vim.log.levels.WARN)
-			return
+			return abort()
 		end
 
 		local exact, extendable = find_candidates(lookup, prefix)
@@ -519,12 +505,12 @@ local function read_surround(vis_mode)
 		-- ── D ────────────────────────────────────────────────────────────────
 		if not exact and not extendable then
 			vim.notify("surrounded: no surround mapped to '" .. prefix .. "'", vim.log.levels.WARN)
-			return
+			return abort()
 		end
 
 		-- ── A ────────────────────────────────────────────────────────────────
 		if exact and not extendable then
-			finish(exact[1], space_count, newline_count, vis_mode)
+			finish(exact[1], space_count, newline_count)
 			return
 		end
 
@@ -534,16 +520,16 @@ local function read_surround(vis_mode)
 
 			if next_ch == nil then
 				-- Timed out.
-				finish(exact[1], space_count, newline_count, vis_mode)
+				finish(exact[1], space_count, newline_count)
 				return
 			end
 
 			if next_ch == BYTE_ESC then
-				return
+				return abort()
 			end
 
 			if next_ch == accept_raw then
-				finish(exact[1], space_count, newline_count, vis_mode)
+				finish(exact[1], space_count, newline_count)
 				return
 			end
 
@@ -554,12 +540,13 @@ local function read_surround(vis_mode)
 			if not exact2 and not ext2 then
 				-- Cannot extend.
 				if config.auto_terminate then
-					finish(exact[1], space_count, newline_count, vis_mode)
-					vim.api.nvim_feedkeys(next_ch, "n", false)
+					-- Queue the key first: finish() inserts g@ in front of it.
+					vim.api.nvim_feedkeys(next_ch, "mi", false)
+					finish(exact[1], space_count, newline_count)
 					return
 				else
 					vim.notify("surrounded: '" .. next_ch .. "' cannot extend '" .. prefix .. "'", vim.log.levels.WARN)
-					return
+					return abort()
 				end
 			end
 
@@ -571,11 +558,11 @@ local function read_surround(vis_mode)
 		if not exact and extendable then
 			local next_ch = vim.fn.getcharstr()
 			if next_ch == BYTE_ESC then
-				return
+				return abort()
 			end
 			if next_ch == accept_raw then
 				vim.notify("surrounded: incomplete delimiter '" .. prefix .. "'", vim.log.levels.WARN)
-				return
+				return abort()
 			end
 			prefix = prefix .. next_ch
 		end
@@ -587,17 +574,29 @@ end
 -- ─────────────────────────────────────────────────────────────────────────────
 
 local function register_keymap()
-	vim.keymap.set("x", config.surround, function()
-		local vis_mode = vim.fn.mode() -- capture BEFORE leaving visual mode
-		vim.api.nvim_feedkeys(BYTE_ESC, "x", false)
-		vim.schedule(function()
-			read_surround(vis_mode)
-		end)
-	end, {
+	-- The delimiter is read while still in visual mode (the selection stays
+	-- highlighted); finish() then runs g@ on that selection.
+	vim.keymap.set("x", config.surround, read_surround, {
 		desc = "surrounded: surround visual selection",
 		noremap = true,
 		silent = true,
 	})
+
+	-- `.` has no built-in meaning in visual mode: use it to re-apply the last
+	-- surround to the new selection.  This goes through g@ too, so a following
+	-- normal-mode `.` keeps repeating it.
+	if config.visual_repeat then
+		vim.keymap.set("x", ".", function()
+			if not last_op then
+				return abort()
+			end
+			run_last_op()
+		end, {
+			desc = "surrounded: repeat last surround on selection",
+			noremap = true,
+			silent = true,
+		})
+	end
 end
 
 -- ─────────────────────────────────────────────────────────────────────────────
